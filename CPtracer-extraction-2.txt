@@ -1,5 +1,18 @@
-input_file = "file1c.fastq"
-output_file = "file1d.fastq"
+# pre-fix
+targets=("your_file_name")
+
+for prefix in "${targets[@]}"; do
+    # define file name
+    input_file="${prefix}c.fastq"
+    filtered_file="${prefix}d.fastq"
+    filtered2_file="${prefix}e.fastq"
+    txt_file="${prefix}.txt"
+    barcode_file="${prefix}_barcode.txt"
+
+
+    python3 <<EOF
+input_file = "$input_file"
+output_file = "$filtered_file"
 
 with open(input_file, "r") as file:
     lines = file.readlines()
@@ -13,8 +26,8 @@ with open(output_file, "w") as file:
             file.write(lines[i+2])
             file.write(lines[i+3])
 
-input_file = "file1d.fastq"
-output_file = "file1e.fastq"
+input_file = "$filtered_file"
+output_file = "$filtered2_file"
 max_length = 269
 
 with open(input_file, "r") as file:
@@ -29,8 +42,8 @@ with open(output_file, "w") as file:
             file.write(lines[i+2])
             file.write(lines[i+3])
 
-fastq_file = "file1e.fastq"
-output_file = "file1.txt"
+fastq_file = "$filtered2_file"
+output_file = "$txt_file"
 
 with open(fastq_file, "r") as fastq:
     with open(output_file, "w") as output:
@@ -40,8 +53,8 @@ with open(fastq_file, "r") as fastq:
                 output.write(sequence + "\n")
 
 
-input_file = "file1.txt"
-output_file = "file1_barcode.txt"
+input_file = "$txt_file"
+output_file = "$barcode_file"
 
 with open(input_file, "r") as file:
     lines = file.readlines()
@@ -50,3 +63,7 @@ with open(output_file, "w") as file:
     for i, line in enumerate(lines):
         new_line = line.rstrip() + "," + str(i+1) + "\n"
         file.write(new_line)
+
+EOF
+done
+
