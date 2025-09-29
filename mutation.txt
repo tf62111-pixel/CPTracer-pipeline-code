@@ -1,0 +1,6 @@
+MutationID	Alignment_Position	Anno	FM
+Mut1	27-27	deletion	5559
+Mut2	101-174	deletion	11
+Mut3	12-49	deletion	334
+Mut4	65-65	insertion	25508
+Mut5	95-100	deletion	1927
