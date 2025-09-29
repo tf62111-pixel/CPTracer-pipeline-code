@@ -1,0 +1,200 @@
+import os
+import pandas as pd
+from collections import defaultdict
+import itertools
+import numpy as np
+import xlsxwriter
+
+# Nodeクラス（UPGMA用）
+class Node:
+    def __init__(self, name, distance=0.0, left=None, right=None):
+        self.name = name
+        self.distance = distance
+        self.left = left
+        self.right = right
+
+    def to_newick(self):
+        if self.left is None and self.right is None:
+            return self.name
+        return f"({self.left.to_newick()}:{self.left.distance:.5f},{self.right.to_newick()}:{self.right.distance:.5f})"
+
+def weighted_jaccard(s1, s2, weights):
+    all_mut = set(s1) | set(s2)
+    inter = set(s1) & set(s2)
+    num = sum(weights.get(m, 0) for m in inter)
+    den = sum(weights.get(m, 0) for m in all_mut)
+    return 1 - num / den if den > 0 else 1.0
+
+def upgma(alleles, weights):
+    clusters = {name: Node(name) for name in alleles}
+    cache = {}
+    def dist(a, b):
+        key = tuple(sorted((a, b)))
+        if key not in cache:
+            cache[key] = weighted_jaccard(alleles[a], alleles[b], weights)
+        return cache[key]
+
+    while len(clusters) > 1:
+        a, b = min(itertools.combinations(clusters.keys(), 2), key=lambda x: dist(x[0], x[1]))
+        d = dist(a, b) / 2
+        new_name = f"{a}_{b}"
+        new_node = Node(new_name, 0.0, left=clusters[a], right=clusters[b])
+        clusters[a].distance = clusters[b].distance = d
+        clusters[new_name] = new_node
+        del clusters[a]
+        del clusters[b]
+        alleles[new_name] = alleles[a]  # 適当に継承
+    return list(clusters.values())[0]
+
+def generate_clone_txt_from_alldata(alldata_file, output_base):
+    df = pd.read_csv(alldata_file, sep='\t')
+    clones = df['CloneID'].unique()
+
+    for clone in clones:
+        clone_dir = os.path.join(output_base, clone)
+        os.makedirs(clone_dir, exist_ok=True)
+
+        df_c = df[df['CloneID'] == clone].copy()
+
+        clone_txt_file = os.path.join(clone_dir, 'Clone.txt')
+        with open(clone_txt_file, 'w') as f:
+            f.write("CloneID\tAlleleID\tMutations\n")
+            for _, row in df_c.iterrows():
+                muts = ','.join(m.strip() for m in row['Mutations'].split(','))
+                f.write(f"{clone}\t{row['AlleleID']}\t{muts}\n")
+
+        param_cols = [c for c in df_c.columns if c not in ['CloneID', 'AlleleID', 'Mutations']]
+        allele_params_df = df_c[['AlleleID'] + param_cols]
+        allele_params_df.to_csv(os.path.join(clone_dir, 'AlleleParams_original.txt'), sep='\t', index=False)
+
+    print(f"✅ Clone.txt と AlleleParams_original.txt を各クローン毎に {output_base} に出力しました。")
+
+def read_alleles_from_clone_txt(clone_txt_file):
+    alleles = {}
+    df = pd.read_csv(clone_txt_file, sep='\t')
+    for _, row in df.iterrows():
+        alleles[row['AlleleID']] = [m.strip() for m in row['Mutations'].split(',')]
+    return alleles
+
+def compute_within_clone_weights(alleles):
+    mut_counts = defaultdict(int)
+    n = len(alleles)
+    for muts in alleles.values():
+        for m in set(muts):
+            mut_counts[m] += 1
+    weights = {m: count / n for m, count in mut_counts.items()}
+    return weights
+
+def read_weights(mutation_file, total_alleles, alleles):
+    weights = {}
+    with open(mutation_file) as f:
+        header = f.readline().strip().split('\t')
+        idx_mut = header.index("MutationID")
+        idx_fm = header.index("FM")
+        for line in f:
+            if line.strip() == "":
+                continue
+            parts = line.strip().split('\t')
+            mut_id = parts[idx_mut]
+            fm = int(parts[idx_fm])
+            weights[mut_id] = (fm - 1) / 181695 if total_alleles > 1 else 1.0
+
+    within = compute_within_clone_weights(alleles)
+    n = len(alleles)
+    for m in weights.keys():
+        w = within.get(m, 0) - weights.get(m, 0)
+        if w < 0:
+            w = 1 / n
+        weights[m] = w
+
+    return weights
+
+def get_leaves(node):
+    if node.left is None and node.right is None:
+        return [node.name]
+    return get_leaves(node.left) + get_leaves(node.right)
+
+def output_order_file(leaves, alleles, filename):
+    with open(filename, 'w') as f:
+        f.write("AlleleID\tMutations\n")
+        for leaf in leaves:
+            muts = alleles[leaf]
+            f.write(f"{leaf}\t{','.join(muts)}\n")
+
+def reorder_and_save_allele_params(order_file, original_param_file, output_file):
+    df_order = pd.read_csv(order_file, sep='\t')
+    df_params = pd.read_csv(original_param_file, sep='\t')
+    allele_order = df_order['AlleleID'].tolist()
+    df_params_sorted = df_params.set_index('AlleleID').loc[allele_order].reset_index()
+    df_params_sorted.to_csv(output_file, sep='\t', index=False)
+
+def visualize_alleles(mutation_file, order_file, output_file):
+    mut_df = pd.read_csv(mutation_file, sep='\t')
+    allele_df = pd.read_csv(order_file, sep='\t')
+    mut_df[['start', 'end']] = mut_df['Alignment_Position'].str.split('-', expand=True).astype(int)
+    allele_df['MutationList'] = allele_df['Mutations'].str.replace(' ', '').str.split(',')
+    exploded = allele_df.explode('MutationList').rename(columns={'MutationList': 'MutationID'})
+    merged = exploded.merge(mut_df, on='MutationID', how='left')
+    max_pos = mut_df['end'].max()
+
+    workbook = xlsxwriter.Workbook(output_file)
+    worksheet = workbook.add_worksheet()
+    color_map = {'deletion': '#0000FF', 'insertion': '#FF0000', 'replacement': '#FFFF00'}
+
+    worksheet.write(0, 0, 'AlleleID')
+    for pos in range(1, max_pos + 1):
+        worksheet.write(0, pos, pos)
+
+    allele_ids = allele_df['AlleleID'].unique()
+    for row_idx, allele_id in enumerate(allele_ids, start=1):
+        worksheet.write(row_idx, 0, allele_id)
+        muts = merged[merged['AlleleID'] == allele_id]
+        for _, mut in muts.iterrows():
+            color = color_map.get(mut['Anno'], '#FFFFFF')
+            for col in range(mut['start'], mut['end'] + 1):
+                worksheet.write(row_idx, col, '', workbook.add_format({'bg_color': color}))
+
+    workbook.close()
+    print(f"✅ {output_file} にアレル可視化を出力しました。")
+
+def main():
+    alldata_file = "Alldata.txt"
+    mutation_file = "mutation.txt"
+    output_base = "Output"
+
+    generate_clone_txt_from_alldata(alldata_file, output_base)
+
+    df_all = pd.read_csv(alldata_file, sep='\t')
+    total_alleles = df_all['AlleleID'].nunique()
+
+    clones = [d for d in os.listdir(output_base) if os.path.isdir(os.path.join(output_base, d))]
+
+    for clone in clones:
+        print(f"--- Processing clone {clone} ---")
+        clone_dir = os.path.join(output_base, clone)
+
+        clone_txt = os.path.join(clone_dir, "Clone.txt")
+        original_params = os.path.join(clone_dir, "AlleleParams_original.txt")
+
+        alleles = read_alleles_from_clone_txt(clone_txt)
+        weights = read_weights(mutation_file, total_alleles, alleles)
+
+        root = upgma(alleles, weights)
+        newick = root.to_newick() + ';'
+
+        dnd_file = os.path.join(clone_dir, "Clone.dnd")
+        with open(dnd_file, 'w') as f:
+            f.write(newick + '\n')
+
+        order_file = os.path.join(clone_dir, "Clone_order.txt")
+        leaves = get_leaves(root)
+        output_order_file(leaves, alleles, order_file)
+
+        allele_params_sorted = os.path.join(clone_dir, "AlleleParams.txt")
+        reorder_and_save_allele_params(order_file, original_params, allele_params_sorted)
+
+        excel_out = os.path.join(clone_dir, "allele_visualization.xlsx")
+        visualize_alleles(mutation_file, order_file, excel_out)
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,96 @@
+import pandas as pd
+from Bio import pairwise2
+
+reference_seq = "GAGTCGAGACGCTGACGATACCTTAGTCGACGTGCGCGCTCTCTGACGACTGCACGAAAGTCGACGAAGGGATAGTATGCGTACACGCGACCTTCGTCTGCGCGCTACGTATCACTGGAGAGCGCGCTCGACGACTAAGGATGAGACATGCAGCCACATCCCTTCGTCGTCTGTCGTGCAGTCTCAGGATACGTAGCACGGAGACGAAGG"
+allele_file = "Alleles.txt"
+output_excel = "allele_mutation_aligned_summary.xlsx"
+
+with open(allele_file, "r") as f:
+    allele_seqs = [line.strip().upper() for line in f if line.strip()]
+
+mutation_dict = {}
+mutation_id_counter = 1
+allele_mutation_sets = []
+
+for allele_seq in allele_seqs:
+    aln = pairwise2.align.globalms(reference_seq, allele_seq, 2, -1, -2, -0.5, one_alignment_only=True)[0]
+    ref_aln = aln.seqA
+    alt_aln = aln.seqB
+
+    # アラインメント上のリファレンス配列の実配列位置マッピング
+    ref_pos_map = []
+    ref_pos = 0
+    for c in ref_aln:
+        if c != '-':
+            ref_pos += 1
+            ref_pos_map.append(ref_pos)
+        else:
+            ref_pos_map.append(None)
+
+    mutations = []
+    i = 0
+    while i < len(ref_aln):
+        if ref_aln[i] != alt_aln[i]:
+            start = i
+            ref_block = []
+            alt_block = []
+            while i < len(ref_aln) and ref_aln[i] != alt_aln[i]:
+                ref_block.append(ref_aln[i])
+                alt_block.append(alt_aln[i])
+                i += 1
+            end = i
+
+            # 非ギャップ位置の開始と終了（リファレンス上）
+            ref_start_pos = next((ref_pos_map[j] for j in range(start, end) if ref_pos_map[j] is not None), None)
+            ref_end_pos = next((ref_pos_map[j] for j in reversed(range(start, end)) if ref_pos_map[j] is not None), None)
+
+            # 挿入（リファレンス側ギャップのみ）の場合の処理
+            if ref_start_pos is None and ref_end_pos is None:
+                # 挿入前のリファレンス位置
+                # 挿入開始直前のref_pos_mapを探す（start-1から0方向）
+                insert_pos = None
+                for back_i in range(start - 1, -1, -1):
+                    if ref_pos_map[back_i] is not None:
+                        insert_pos = ref_pos_map[back_i] + 1
+                        break
+                if insert_pos is None:
+                    # 先頭挿入の場合は1に設定（先頭直前とみなす）
+                    insert_pos = 1
+                ref_start_pos = ref_end_pos = insert_pos
+            else:
+                # 挿入以外はリファレンスの範囲をそのまま使う
+                if ref_start_pos is None:
+                    ref_start_pos = start + 1
+                if ref_end_pos is None:
+                    ref_end_pos = end
+
+            key = (ref_start_pos, ref_end_pos, ''.join(ref_block), ''.join(alt_block))
+            if key not in mutation_dict:
+                mutation_dict[key] = f"Mut{mutation_id_counter}"
+                mutation_id_counter += 1
+            mutations.append(mutation_dict[key])
+        else:
+            i += 1
+
+    allele_mutation_sets.append(mutations)
+
+mutation_df = pd.DataFrame([
+    {
+        "MutationID": mut_id,
+        "Alignment_Position": f"{start}-{end}",
+        "Ref_Aligned": ref.replace('-', '∅'),
+        "Alt_Aligned": alt.replace('-', '∅')
+    }
+    for (start, end, ref, alt), mut_id in mutation_dict.items()
+])
+
+allele_df = pd.DataFrame([
+    {"AlleleID": f"Allele{i+1}", "Mutations": ", ".join(muts) if muts else "-"}
+    for i, muts in enumerate(allele_mutation_sets)
+])
+
+with pd.ExcelWriter(output_excel) as writer:
+    mutation_df.to_excel(writer, sheet_name="AlignedMutations", index=False)
+    allele_df.to_excel(writer, sheet_name="Alleles", index=False)
+
+print(f"✅ Excelファイル出力成功: {output_excel}")

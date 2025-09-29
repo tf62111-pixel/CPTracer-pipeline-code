@@ -1,0 +1,220 @@
+import os
+import pandas as pd
+import numpy as np
+from Bio import Phylo
+from ete3 import Tree, TreeStyle, NodeStyle
+
+def read_alldata_mutations(alldata_file):
+    allele_mutations = {}
+    with open(alldata_file) as f:
+        header = f.readline().strip().split('\t')
+        idx_allele = header.index("AlleleID")
+        idx_muts = header.index("Mutations")
+        for line in f:
+            if not line.strip():
+                continue
+            parts = line.strip().split('\t')
+            allele_id = parts[idx_allele]
+            mutations = {m.strip() for m in parts[idx_muts].split(',')}
+            allele_mutations[allele_id] = mutations
+    return allele_mutations
+
+def compute_common_mutations(clade, allele_mutations):
+    if not clade.clades:
+        clade.common_mutations = allele_mutations.get(clade.name, set())
+    else:
+        child_sets = [compute_common_mutations(c, allele_mutations) for c in clade.clades]
+        clade.common_mutations = set.intersection(*child_sets) if child_sets else set()
+    return clade.common_mutations
+
+def simplify_tree(clade):
+    new_children = []
+    for c in clade.clades:
+        simplify_tree(c)
+        # 内部ノードのみ簡略化
+        if (not c.is_terminal()) and hasattr(c, 'common_mutations') and c.common_mutations == clade.common_mutations:
+            print(f"🌿 簡略化: {c.name} は {clade.name} に統合されます")
+            new_children.extend(c.clades)
+        else:
+            new_children.append(c)
+    clade.clades = new_children
+
+def to_newick(clade):
+    if not clade.clades:
+        return clade.name
+    children_str = ",".join(to_newick(c) for c in clade.clades)
+    return f"({children_str})"
+
+def write_common_mutations_file(clade, file_obj, prefix="Node"):
+    node_id = getattr(clade, "name", None) or prefix
+    muts = ", ".join(sorted(clade.common_mutations))
+    file_obj.write(f"{node_id}\t{muts}\n")
+    for i, c in enumerate(clade.clades):
+        write_common_mutations_file(c, file_obj, f"{node_id}_{i+1}")
+
+def read_parameter_table(param_file):
+    df = pd.read_csv(param_file, sep='\t', index_col=0)
+    x_df = (10 ** df.astype(float)) / 10000.0 - 0.000001
+    return x_df
+
+def assign_node_ids(tree):
+    node_map = {}
+    node_counter = [1]
+    def assign(clade):
+        if not clade.is_terminal():
+            if clade == tree.root:
+                clade.name = "Root"
+            else:
+                clade.name = f"Node{node_counter[0]}"
+                node_counter[0] += 1
+            node_map[clade.name] = clade
+        for sub in clade.clades:
+            assign(sub)
+    assign(tree.root)
+    return node_map
+
+def calculate_depths(tree):
+    depths = {}
+    def assign_depth(clade, depth):
+        if clade.name:
+            depths[clade.name] = depth
+        for c in clade.clades:
+            assign_depth(c, depth + 1)
+    assign_depth(tree.root, 0)
+    return depths
+
+def collect_leaves(clade):
+    if clade.is_terminal():
+        return [clade.name]
+    leaves = []
+    for c in clade.clades:
+        leaves.extend(collect_leaves(c))
+    return leaves
+
+def output_node_parameter_matrix(poly_dnd_file, param_file, output_matrix_file, output_dnd_file):
+    df = read_parameter_table(param_file)
+    tree = Phylo.read(poly_dnd_file, "newick")
+
+    node_map = assign_node_ids(tree)
+    depths = calculate_depths(tree)
+
+    Phylo.write(tree, output_dnd_file, "newick")
+    print(f"✅ ID付きツリーを出力しました: {output_dnd_file}")
+
+    leaf_params = {leaf.name: np.log10((df.loc[leaf.name]+0.000001)*10000) for leaf in tree.get_terminals() if leaf.name in df.index}
+    node_params = {}
+    for node_id, clade in node_map.items():
+        leaves = collect_leaves(clade)
+        valid_leaves = [l for l in leaves if l in df.index]
+        if valid_leaves:
+            summed = df.loc[valid_leaves].sum()
+            node_params[node_id] = np.log10((summed + 0.000001)*10000)
+
+    rows = []
+    for parent_id, parent_clade in node_map.items():
+        parent_vec = node_params.get(parent_id)
+        if parent_vec is None:
+            continue
+        parent_depth = depths.get(parent_id)
+        for child in parent_clade.clades:
+            child_id = child.name
+            if child.is_terminal():
+                child_vec = leaf_params.get(child_id)
+            else:
+                child_vec = node_params.get(child_id)
+            if child_vec is not None:
+                row = [parent_id, child_id, parent_depth] + parent_vec.values.tolist() + child_vec.values.tolist()
+                rows.append(row)
+
+    param_cols = df.columns.tolist()
+    colnames = (["ParentID","ChildID","ParentDepth"] +
+                [f"parent_{c}" for c in param_cols] +
+                [f"child_{c}" for c in param_cols])
+    pd.DataFrame(rows, columns=colnames).to_csv(output_matrix_file, sep='\t', index=False)
+    print(f"✅ 親子パラメータ行列を出力しました: {output_matrix_file}")
+
+def visualize_tree(poly_dnd_file, svg_out):
+    t = Tree(poly_dnd_file, format=1)
+
+    colors = ["red", "blue", "green", "purple", "orange", "cyan", "magenta", "gold", "brown"]
+    node_colors = {}
+    idx = 0
+
+    for node in t.traverse("preorder"):
+        color = colors[idx % len(colors)]
+        node_colors[node] = color
+
+        nstyle = NodeStyle()
+        nstyle["fgcolor"] = color
+        nstyle["size"] = 10
+        nstyle["shape"] = "sphere"
+        nstyle["hz_line_width"] = 1
+        nstyle["vt_line_width"] = 1
+        node.set_style(nstyle)
+
+        idx += 1
+
+    def layout(node):
+        if node.up:
+            parent_color = node_colors[node.up]
+            node.img_style["vt_line_color"] = node_colors[node]
+            node.img_style["hz_line_color"] = parent_color
+        else:
+            node.img_style["hz_line_color"] = node_colors[node]
+
+    ts = TreeStyle()
+    ts.layout_fn = layout
+    ts.show_leaf_name = False
+    ts.show_branch_length = True
+    ts.show_branch_support = False
+    ts.scale = 1000
+    ts.branch_vertical_margin = 0
+
+    t.render(svg_out, tree_style=ts, w=1600)
+    print(f"✅ 親ノードの色で枝を塗ったツリーを SVG に出力しました: {svg_out}")
+
+def process_clone_folder(clone_dir, alldata_file):
+    dnd_file = os.path.join(clone_dir, "Clone.dnd")
+    param_file = os.path.join(clone_dir, "AlleleParams.txt")
+    poly_dnd_file = os.path.join(clone_dir, "Poly.dnd")
+    poly_mut_file = os.path.join(clone_dir, "Poly_common_mutations.txt")
+    output_dnd_file = os.path.join(clone_dir, "Poly_withNodeID.dnd")
+    output_matrix_file = os.path.join(clone_dir, "Node_28param_with_depth.txt")
+    svg_out = os.path.join(clone_dir, "Poly_correct_parent_branches.svg")
+
+    if not os.path.exists(dnd_file) or not os.path.exists(param_file):
+        print(f"⚠️ 必要なファイルが見つかりません。スキップ: {clone_dir}")
+        return
+
+    tree = Phylo.read(dnd_file, "newick")
+    allele_mutations = read_alldata_mutations(alldata_file)
+    compute_common_mutations(tree.root, allele_mutations)
+    simplify_tree(tree.root)
+
+    newick = to_newick(tree.root) + ";"
+    with open(poly_dnd_file, "w") as f:
+        f.write(newick + "\n")
+    with open(poly_mut_file, "w") as f:
+        write_common_mutations_file(tree.root, f)
+
+    print(f"✅ {poly_dnd_file} と {poly_mut_file} を出力しました。")
+
+    output_node_parameter_matrix(poly_dnd_file, param_file, output_matrix_file, output_dnd_file)
+    visualize_tree(poly_dnd_file, svg_out)
+
+def main():
+    alldata_file = "Alldata.txt"
+
+    if os.path.exists("Clone.dnd"):
+        process_clone_folder(".", alldata_file)
+
+    output_dir = "Output"
+    if os.path.exists(output_dir):
+        for clone_name in os.listdir(output_dir):
+            clone_dir = os.path.join(output_dir, clone_name)
+            if os.path.isdir(clone_dir):
+                process_clone_folder(clone_dir, alldata_file)
+
+if __name__ == "__main__":
+    main()
+

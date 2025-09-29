@@ -1,0 +1,44 @@
+import pandas as pd
+from collections import defaultdict
+
+# ファイル読み込み
+input_file = "input.txt"  # 実際のパスに置き換えてください
+df = pd.read_csv(input_file, sep="\t")
+
+# CloneID × Mut のアレル数をカウント
+clone_mut_counts = defaultdict(lambda: defaultdict(int))
+
+for _, row in df.iterrows():
+    clone_id = row["CloneID"]
+    # カンマ区切りで分割し、余分な空白や空エントリを除去
+    mutations = set(m.strip() for m in str(row["Mutations"]).split(",") if m.strip())
+    for mut in mutations:
+        clone_mut_counts[clone_id][str(mut)] += 1  # すべて文字列に統一
+
+# Mutのソート関数：MutX形式を数値順、それ以外は文字列順
+def safe_sort_key(x):
+    x_str = str(x)
+    if x_str.startswith("Mut"):
+        try:
+            return (0, int(x_str[3:]))  # 優先度0：Mutで始まる → 数値順
+        except ValueError:
+            return (0, x_str)
+    return (1, x_str)  # 優先度1：それ以外 → アルファベット順
+
+# 全てのMutとCloneIDを収集・ソート
+all_muts = sorted({str(mut) for mut_dict in clone_mut_counts.values() for mut in mut_dict}, key=safe_sort_key)
+clone_ids = sorted(clone_mut_counts.keys())
+
+# 出力用DataFrameの初期化と入力
+output_df = pd.DataFrame(index=all_muts, columns=clone_ids)
+for clone in clone_ids:
+    for mut in all_muts:
+        output_df.at[mut, clone] = clone_mut_counts[clone].get(mut, 0)
+
+# 欠損を0で埋め、型を整数に変換（将来対応）
+output_df = output_df.fillna(0).infer_objects(copy=False).astype(int)
+
+# 出力整形と保存
+output_df.index.name = "Mut"
+output_df.reset_index(inplace=True)
+output_df.to_csv("mut_counts_per_clone_corrected.txt", sep="\t", index=False)
