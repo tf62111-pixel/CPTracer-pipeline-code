@@ -1,0 +1,52 @@
+input_file = "file1c.fastq"
+output_file = "file1d.fastq"
+
+with open(input_file, "r") as file:
+    lines = file.readlines()
+
+with open(output_file, "w") as file:
+    for i in range(0, len(lines), 4):
+        sequence = lines[i+1].strip()
+        if sequence.endswith("AGG"):
+            file.write(lines[i])
+            file.write(lines[i+1])
+            file.write(lines[i+2])
+            file.write(lines[i+3])
+
+input_file = "file1d.fastq"
+output_file = "file1e.fastq"
+max_length = 269
+
+with open(input_file, "r") as file:
+    lines = file.readlines()
+
+with open(output_file, "w") as file:
+    for i in range(0, len(lines), 4):
+        sequence = lines[i+1].strip()
+        if len(sequence) <= max_length:
+            file.write(lines[i])
+            file.write(lines[i+1])
+            file.write(lines[i+2])
+            file.write(lines[i+3])
+
+fastq_file = "file1e.fastq"
+output_file = "file1.txt"
+
+with open(fastq_file, "r") as fastq:
+    with open(output_file, "w") as output:
+        for i, line in enumerate(fastq):
+            if i % 4 == 1:  # リードのシークエンス行を処理
+                sequence = line.strip()
+                output.write(sequence + "\n")
+
+
+input_file = "file1.txt"
+output_file = "file1_barcode.txt"
+
+with open(input_file, "r") as file:
+    lines = file.readlines()
+
+with open(output_file, "w") as file:
+    for i, line in enumerate(lines):
+        new_line = line.rstrip() + "," + str(i+1) + "\n"
+        file.write(new_line)

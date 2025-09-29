@@ -1,0 +1,4 @@
+cd /your directry
+fastx_trimmer -f 31 -l 300  -i file1.fastq -o file1a.fastq
+seqkit grep -sidp GAGTC -R 22:26 file1a.fastq > file1b.fastq
+cutadapt -a ATCCTAGGGCCTAGAGGGCCCctagctagt file1b.fastq > file1c.fastq -e 0.2 -m 26 --overlap 16

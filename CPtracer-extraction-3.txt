@@ -1,0 +1,1 @@
+bartender_single_com -f file_barcode.txt -o file -z -1 -d 27 -t 8
