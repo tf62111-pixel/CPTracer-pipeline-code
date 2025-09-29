@@ -12,8 +12,11 @@ Prior to running the tree reconstruction pipeline, pairwise2 (Cock, P.J., Antao,
 
 In the extracted sequences, the first 21 bp correspond to the random DNA barcode, while the sequence from the 22nd base onward corresponds to the scratchpad. After filtering, only these sequences are used as input for Alleles.txt. By executing Alleleanalysis.phy, a unique mutation list is generated, along with an Excel file summarizing which mutations are present in each allele. 
 
+Based on the generated Excel file, three additional files should be prepared: alldata.txt and input.txt.
 
+By executing Count.phy, an Excel file is generated that records, for each clone, the number of alleles carrying each mutation. The total number of alleles harboring a given mutation should be used as the FM value when preparing mutation.txt.
 
+Subsequently, by executing Tree.phy, Poly.phy, and Conbine.phy, tree reconstruction is performed and the parameters associated with each branch are generated.
 
 Sample input files illustrating the required format can be downloaded from this page.
 
