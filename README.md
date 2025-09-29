@@ -1,0 +1,1 @@
+By executing the CPtracer-extraction-1 code in bash on the file1.fastq file, followed by running the CPtracer-extraction-2 code in Python, and then applying the CPtracer-extraction-3 code again in bash, the region containing both the random DNA barcode and the scratchpad is extracted.
