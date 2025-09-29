@@ -1,4 +1,20 @@
-cd /your directry
-fastx_trimmer -f 31 -l 300  -i file1.fastq -o file1a.fastq
-seqkit grep -sidp GAGTC -R 22:26 file1a.fastq > file1b.fastq
-cutadapt -a ATCCTAGGGCCTAGAGGGCCCctagctagt file1b.fastq > file1c.fastq -e 0.2 -m 26 --overlap 16
+#!/bin/bash
+cd /your directory
+
+# pre-fix
+targets=("your_file_name")
+
+for prefix in "${targets[@]}"; do
+    # define file name
+    input_file="${prefix}.fastq"
+    trimmed_file="${prefix}a.fastq"
+    grep_file="${prefix}b.fastq"
+    cutadapt_file="${prefix}c.fastq"
+    
+    # do command
+    conda activate fastx_env
+    fastx_trimmer -f 31 -l 300 -i "$input_file" -o "$trimmed_file"
+    conda deactivate
+    seqkit grep -sidp GAGTC -R 22:26 "$trimmed_file" > "$grep_file"
+    cutadapt -a ATCCTAGGGCCTAGAGGGCCCctagctagt "$grep_file" > "$cutadapt_file" -e 0.2 -m 26 --overlap 16
+done
