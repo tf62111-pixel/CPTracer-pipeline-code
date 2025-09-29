@@ -16,6 +16,10 @@ Based on the generated Excel file, three additional files should be prepared: al
 
 By executing Count.phy, an Excel file is generated that records, for each clone, the number of alleles carrying each mutation. The total number of alleles harboring a given mutation should be used as the FM value when preparing mutation.txt.
 
+In Tree.phy, on line 100:weights[mut_id] = (fm - 1) / 181695 if total_alleles > 1 else 1.0
+
+the number 181695 represents the total number of alleles. Please replace this value with the number of rows in your own Alleles.txt file.
+
 Subsequently, by executing Tree.phy, Poly.phy, and Conbine.phy, tree reconstruction is performed and the parameters associated with each branch are generated.
 
 Sample input files illustrating the required format can be downloaded from this page.
