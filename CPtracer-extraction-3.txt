@@ -1,1 +1,30 @@
-bartender_single_com -f file_barcode.txt -o file -z -1 -d 27 -t 8
+#!/bin/bash
+
+# pre-fix
+targets=("your_file_name")
+
+for prefix in "${targets[@]}"; do
+    # define file name
+    input_file="${prefix}_barcode.txt"
+    output_file="${prefix}"
+
+    # do command
+    bartender_single_com -f "$input_file" -o "$output_file" -z -1 -d 27 -t 8
+
+done
+
+# pre-fix
+targets=("your_file_name")
+
+files=""
+for target in "${targets[@]}"; do
+    files+="${target}_cluster.csv,${target}_quality.csv,"
+done
+
+# delete ,
+files=${files%,}
+
+echo $files
+
+# do command
+bartender_combiner_com -f $files -o total
